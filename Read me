@@ -1,0 +1,35 @@
+#  Copy trader from mt4 from mt5
+https://www.fxblue.com/appstore/personal-trade-copier
+
+####
+
+Buffer 6 is sl of buy
+Buffer 5 is buy
+Buffer 2 is sell
+Buffer 3 is sl of sell
+
+Buffer 4 is target of sell
+Buffer 1 is target of buy
+
+
+
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #1 value at current bar: 64.818652
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #2 value at current bar: 64.999321 is sell
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #3 value at current bar: 65.518485  is sl 
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #4 value at current bar: 63.499975
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #5 value at current bar: 63.319306 is buy
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #6 value at current bar: 62.800142  is sl
+
+Remove sl and tp from code
+
+Buy: If last closed candle opens below Buffer 5 and closes above Buffer 5 → open a Buy
+
+Sell: If last closed candle opens above Buffer 2 and closes below Buffer 2 → open a Sell
+
+
+Close Buy if the last candle open below Buffer 1 and close above Buffer 1
+Close Sell if the last candle open above Buffer 4 and close below Buffer 4
+
+
+Close Buy if the last candle 2 candles close below Buffer 6
+Close Sell if the last 2 candles close above Buffer 3

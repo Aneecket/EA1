@@ -1,0 +1,131 @@
+#include <Trade\Trade.mqh>
+CTrade trade;
+
+input string IndicatorName = "LT";   // Indicator file name
+input double LotSize = 0.01;
+
+int handle;
+datetime lastBarTime = 0;
+
+int OnInit()
+{
+   handle = iCustom(_Symbol, PERIOD_CURRENT, IndicatorName);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Failed to load indicator: ", IndicatorName);
+      return(INIT_FAILED);
+   }
+
+   lastBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   return(INIT_SUCCEEDED);
+}
+
+void OnTick()
+{
+   datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   if(currentBarTime == lastBarTime)
+      return;
+
+   lastBarTime = currentBarTime;
+
+   // Buffers for last 3 candles: index 1 and 2 used
+   double buffer1[], buffer2[], buffer3[], buffer4[], buffer5[], buffer6[];
+
+   if(CopyBuffer(handle, 1, 1, 3, buffer1) < 0) return;
+   if(CopyBuffer(handle, 2, 1, 3, buffer2) < 0) return;
+   if(CopyBuffer(handle, 3, 1, 3, buffer3) < 0) return;
+   if(CopyBuffer(handle, 4, 1, 3, buffer4) < 0) return;
+   if(CopyBuffer(handle, 5, 1, 3, buffer5) < 0) return;
+   if(CopyBuffer(handle, 6, 1, 3, buffer6) < 0) return;
+
+   // Last closed candle index = 1, candle before that index = 2
+   double open1 = iOpen(_Symbol, PERIOD_CURRENT, 1);
+   double close1 = iClose(_Symbol, PERIOD_CURRENT, 1);
+   double close2 = iClose(_Symbol, PERIOD_CURRENT, 2);
+
+// ✅ Debug print all buffer values from last candle
+   PrintFormat("Candle[1] Open=%.5f Close=%.5f | Buffer1=%.5f Buffer2=%.5f Buffer3=%.5f Buffer4=%.5f Buffer5=%.5f Buffer6=%.5f",
+               open1, close1,
+               buffer1[0], buffer2[0], buffer3[0], buffer4[0], buffer5[0], buffer6[0]);
+
+   bool hasPosition = PositionSelect(_Symbol);
+
+   // ENTRY: Only if no position open
+   if(!hasPosition)
+   {
+      // Buy entry: last candle opens below Buffer5 and closes above Buffer5
+      if(buffer5[0] != EMPTY_VALUE && open1 < buffer5[0] && close1 > buffer5[0])
+      {
+         if(trade.Buy(LotSize, _Symbol))
+            Print("BUY opened at candle close. Buffer5=", buffer5[0]);
+         else
+            Print("Failed to open BUY. Error: ", GetLastError());
+      }
+
+      // Sell entry: last candle opens above Buffer2 and closes below Buffer2
+      if(buffer2[0] != EMPTY_VALUE && open1 > buffer2[0] && close1 < buffer2[0])
+      {
+         if(trade.Sell(LotSize, _Symbol))
+            Print("SELL opened at candle close. Buffer2=", buffer2[0]);
+         else
+            Print("Failed to open SELL. Error: ", GetLastError());
+      }
+   }
+   else
+   {
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      ulong ticket = PositionGetInteger(POSITION_TICKET);
+
+      if(type == POSITION_TYPE_BUY)
+      {
+         // Close Buy if last candle opens below Buffer1 and closes above Buffer1
+         if(buffer1[0] != EMPTY_VALUE && open1 < buffer1[0] && close1 > buffer1[0])
+         {
+            if(trade.PositionClose(_Symbol))
+               Print("BUY closed by Buffer1 condition.");
+            else
+               Print("Failed to close BUY. Error: ", GetLastError());
+            return;
+         }
+
+         // Close Buy if last 2 candles close below Buffer6
+         if(buffer6[0] != EMPTY_VALUE && buffer6[1] != EMPTY_VALUE)
+         {
+            if(close1 < buffer6[0] && close2 < buffer6[1])
+            {
+               if(trade.PositionClose(_Symbol))
+                  Print("BUY closed by Buffer6 last 2 candles close condition.");
+               else
+                  Print("Failed to close BUY. Error: ", GetLastError());
+               return;
+            }
+         }
+      }
+
+      if(type == POSITION_TYPE_SELL)
+      {
+         // Close Sell if last candle opens above Buffer4 and closes below Buffer4
+         if(buffer4[0] != EMPTY_VALUE && open1 > buffer4[0] && close1 < buffer4[0])
+         {
+            if(trade.PositionClose(_Symbol))
+               Print("SELL closed by Buffer4 condition.");
+            else
+               Print("Failed to close SELL. Error: ", GetLastError());
+            return;
+         }
+
+         // Close Sell if last 2 candles close above Buffer3
+         if(buffer3[0] != EMPTY_VALUE && buffer3[1] != EMPTY_VALUE)
+         {
+            if(close1 > buffer3[0] && close2 > buffer3[1])
+            {
+               if(trade.PositionClose(_Symbol))
+                  Print("SELL closed by Buffer3 last 2 candles close condition.");
+               else
+                  Print("Failed to close SELL. Error: ", GetLastError());
+               return;
+            }
+         }
+      }
+   }
+}

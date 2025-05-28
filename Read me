@@ -15,12 +15,12 @@ Buffer 1 is target of buy
 
 
 
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #1 value at current bar: 64.818652
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #2 value at current bar: 64.999321 is sell
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #3 value at current bar: 65.518485  is sl 
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #4 value at current bar: 63.499975
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #5 value at current bar: 63.319306 is buy
-2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #6 value at current bar: 62.800142  is sl
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #1 value at current bar: 64.818652 top line aqua
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #2 value at current bar: 64.999321 top line red
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #3 value at current bar: 65.518485  top line firebrick
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #4 value at current bar: 63.499975 low line aqua
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #5 value at current bar: 63.319306 low line red
+2025.05.28 08:22:48.013 test1 (XBRUSD,H1) Buffer #6 value at current bar: 62.800142  low  line firebrick
 
 Remove sl and tp from code
 

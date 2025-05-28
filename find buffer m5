@@ -1,0 +1,45 @@
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+input string IndicatorName = "LT"; // Name of the indicator (without .ex5)
+input int MaxBuffers = 10;          // Max number of buffers to attempt reading
+
+int OnInit()
+  {
+   Print("EA started, loading indicator buffers...");
+   return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+  }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+   // Symbol and timeframe for the indicator
+   string symbol = _Symbol;
+   ENUM_TIMEFRAMES timeframe = PERIOD_CURRENT;
+
+   // For each buffer index, try to get the latest value (shift = 0)
+   for(int buffer_index=0; buffer_index < MaxBuffers; buffer_index++)
+     {
+      double buffer_value[];
+      // Copy one value of the buffer at shift 0 (current bar)
+      int copied = CopyBuffer(iCustom(symbol, timeframe, IndicatorName), buffer_index, 0, 1, buffer_value);
+      if(copied > 0)
+        {
+         PrintFormat("Buffer #%d value at current bar: %f", buffer_index, buffer_value[0]);
+        }
+      else
+        {
+         // No data for this buffer (possibly index invalid or no buffer at this index)
+         PrintFormat("Buffer #%d not available or empty", buffer_index);
+        }
+     }
+  }

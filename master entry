@@ -1,0 +1,151 @@
+#property strict
+
+string labelName = "ultradeforex_dlable20";
+datetime lastBarTime = 0;
+double lotSize = 0.1;  // Set your lot size here
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    Print("EA initialized");
+    lastBarTime = 0;
+    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+    Print("EA deinitialized");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+    datetime currentBarTime = iTime(Symbol(), PERIOD_CURRENT, 0);
+    if (currentBarTime != lastBarTime)
+    {
+        lastBarTime = currentBarTime;
+
+        if (ObjectFind(0, labelName) >= 0)
+        {
+            string labelText = ObjectGetString(0, labelName, OBJPROP_TEXT);
+
+            // Get the current open trades for this symbol
+            int totalTrades = OrdersTotal();
+            bool buyExists = false;
+            bool sellExists = false;
+            int buyTicket = -1;
+            int sellTicket = -1;
+
+            for (int i = 0; i < totalTrades; i++)
+            {
+                if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+                {
+                    if (OrderSymbol() == Symbol())
+                    {
+                        if (OrderType() == OP_BUY)
+                        {
+                            buyExists = true;
+                            buyTicket = OrderTicket();
+                        }
+                        else if (OrderType() == OP_SELL)
+                        {
+                            sellExists = true;
+                            sellTicket = OrderTicket();
+                        }
+                    }
+                }
+            }
+
+            if (labelText == "BUY")
+            {
+                Print("Signal: BUY");
+                // Close sell if exists
+                if (sellExists)
+                {
+                    CloseOrder(sellTicket);
+                }
+                // Open buy if not exists
+                if (!buyExists)
+                {
+                    OpenOrder(OP_BUY);
+                }
+            }
+            else if (labelText == "SELL")
+            {
+                Print("Signal: SELL");
+                // Close buy if exists
+                if (buyExists)
+                {
+                    CloseOrder(buyTicket);
+                }
+                // Open sell if not exists
+                if (!sellExists)
+                {
+                    OpenOrder(OP_SELL);
+                }
+            }
+            else
+            {
+                Print("Signal is neither BUY nor SELL: ", labelText);
+            }
+        }
+        else
+        {
+            Print("Label '", labelName, "' not found on the chart");
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Close order by ticket                                            |
+//+------------------------------------------------------------------+
+void CloseOrder(int ticket)
+{
+    if (ticket < 0)
+        return;
+
+    if (OrderSelect(ticket, SELECT_BY_TICKET))
+    {
+        double closePrice = 0;
+        int cmd = OrderType();
+        if (cmd == OP_BUY)
+            closePrice = MarketInfo(OrderSymbol(), MODE_BID);
+        else if (cmd == OP_SELL)
+            closePrice = MarketInfo(OrderSymbol(), MODE_ASK);
+        else
+            return;
+
+        bool result = OrderClose(ticket, OrderLots(), closePrice, 3, clrRed);
+        if (result)
+            Print("Closed order #", ticket);
+        else
+            Print("Failed to close order #", ticket, " Error: ", GetLastError());
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Open order with type (OP_BUY or OP_SELL)                        |
+//+------------------------------------------------------------------+
+void OpenOrder(int orderType)
+{
+    double price = 0;
+    if (orderType == OP_BUY)
+        price = MarketInfo(Symbol(), MODE_ASK);
+    else if (orderType == OP_SELL)
+        price = MarketInfo(Symbol(), MODE_BID);
+    else
+        return;
+
+    int ticket = OrderSend(Symbol(), orderType, lotSize, price, 3, 0, 0, "Signal trade", 0, 0, clrGreen);
+    if (ticket > 0)
+        Print("Opened ", orderType == OP_BUY ? "BUY" : "SELL", " order #", ticket);
+    else
+        Print("Failed to open ", orderType == OP_BUY ? "BUY" : "SELL", " order. Error: ", GetLastError());
+}

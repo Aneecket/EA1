@@ -1,3 +1,26 @@
+#include <Trade\Trade.mqh>
+
+CTrade trade;
+
+input string IndicatorName = "LT";   // Indicator file name
+input double LotSize = 0.01;
+
+int handle;
+datetime lastBarTime = 0;
+
+int OnInit()
+{
+   handle = iCustom(_Symbol, PERIOD_CURRENT, IndicatorName);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Failed to load indicator: ", IndicatorName);
+      return(INIT_FAILED);
+   }
+
+   lastBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   return(INIT_SUCCEEDED);
+}
+
 void OnTick()
 {
    datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
@@ -19,9 +42,7 @@ void OnTick()
    double close1 = iClose(_Symbol, PERIOD_CURRENT, 1);
    double close2 = iClose(_Symbol, PERIOD_CURRENT, 2);
 
-   PrintFormat("Candle[1] Open=%.5f Close=%.5f | Buffer1=%.5f Buffer2=%.5f Buffer3=%.5f Buffer4=%.5f Buffer5=%.5f Buffer6=%.5f",
-               open1, close1,
-               buffer1[0], buffer2[0], buffer3[0], buffer4[0], buffer5[0], buffer6[0]);
+
 
    bool hasPosition = PositionSelect(_Symbol);
 

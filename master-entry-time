@@ -54,7 +54,7 @@ void OnTick()
         // Check if label exists
         if (ObjectFind(0, labelName) >= 0)
         {
-               currentSignal = StringTrimLeft(StringTrimRight(ObjectGetString(0, labelName, OBJPROP_TEXT)));
+            currentSignal = StringTrimLeft(StringTrimRight(ObjectGetString(0, labelName, OBJPROP_TEXT)));
 
 
             Print("Previous Signal: ", prevSignal, " | Current Signal: ", currentSignal);

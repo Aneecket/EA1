@@ -2,23 +2,16 @@
 
 string labelName = "ultradeforex_dlable20";
 datetime lastBarTime = 0;
-double lotSize = 0.1;  // Set your lot size here
+string prevSignal = "";
+string currentSignal = "";
+
+input double lotSize = 0.01;  // Set your lot size here
 
 // Check if current time is within allowed trading open hours
 bool IsOpenTradeAllowed()
 {
-    // Get current server time hours and minutes
     int hour = TimeHour(TimeCurrent());
-    int minute = TimeMinute(TimeCurrent());
-
-    // Define allowed intervals in hours (minutes not used for simplicity)
-    // Interval 1: 01:00 - 05:00
-    // Interval 2: 13:00 - 18:00
-
-    if ((hour >= 1 && hour < 5) || (hour >= 13 && hour < 18))
-        return true;
-
-    return false;
+    return ((hour >= 1 && hour < 23) || (hour >= 13 && hour < 18));
 }
 
 int OnInit()
@@ -40,73 +33,74 @@ void OnTick()
     {
         lastBarTime = currentBarTime;
 
+        // Shift signals
+        prevSignal = currentSignal;
+        currentSignal = "";
+
+        // Check if label exists
         if (ObjectFind(0, labelName) >= 0)
         {
-            string labelText = ObjectGetString(0, labelName, OBJPROP_TEXT);
+               currentSignal = StringTrimLeft(StringTrimRight(ObjectGetString(0, labelName, OBJPROP_TEXT)));
 
-            int totalTrades = OrdersTotal();
-            bool buyExists = false;
-            bool sellExists = false;
-            int buyTicket = -1;
-            int sellTicket = -1;
 
-            for (int i = 0; i < totalTrades; i++)
+            Print("Previous Signal: ", prevSignal, " | Current Signal: ", currentSignal);
+
+            if ((currentSignal == "BUY" && prevSignal == "SELL") || (currentSignal == "SELL" && prevSignal == "BUY"))
             {
-                if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+                int totalTrades = OrdersTotal();
+                bool buyExists = false;
+                bool sellExists = false;
+                int buyTicket = -1;
+                int sellTicket = -1;
+
+                for (int i = 0; i < totalTrades; i++)
                 {
-                    if (OrderSymbol() == Symbol())
+                    if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
                     {
-                        if (OrderType() == OP_BUY)
+                        if (OrderSymbol() == Symbol())
                         {
-                            buyExists = true;
-                            buyTicket = OrderTicket();
-                        }
-                        else if (OrderType() == OP_SELL)
-                        {
-                            sellExists = true;
-                            sellTicket = OrderTicket();
+                            if (OrderType() == OP_BUY)
+                            {
+                                buyExists = true;
+                                buyTicket = OrderTicket();
+                            }
+                            else if (OrderType() == OP_SELL)
+                            {
+                                sellExists = true;
+                                sellTicket = OrderTicket();
+                            }
                         }
                     }
                 }
-            }
 
-            if (labelText == "BUY")
-            {
-                Print("Signal: BUY");
-
-                // Close sell anytime
-                if (sellExists)
-                    CloseOrder(sellTicket);
-
-                // Open buy only in allowed time
-                if (!buyExists)
+                if (currentSignal == "BUY")
                 {
-                    if (IsOpenTradeAllowed())
+                    Print("Signal: BUY");
+
+                    if (sellExists)
+                        CloseOrder(sellTicket);
+
+                    if (!buyExists && IsOpenTradeAllowed())
                         OpenOrder(OP_BUY);
-                    else
+                    else if (!buyExists)
                         Print("Not allowed to open BUY trade now. Time restrictions in place.");
                 }
-            }
-            else if (labelText == "SELL")
-            {
-                Print("Signal: SELL");
-
-                // Close buy anytime
-                if (buyExists)
-                    CloseOrder(buyTicket);
-
-                // Open sell only in allowed time
-                if (!sellExists)
+                else if (currentSignal == "SELL")
                 {
-                    if (IsOpenTradeAllowed())
+                    Print("Signal: SELL");
+
+                    if (buyExists)
+                        CloseOrder(buyTicket);
+
+                    if (!sellExists && IsOpenTradeAllowed())
                         OpenOrder(OP_SELL);
-                    else
+                    else if (!sellExists)
                         Print("Not allowed to open SELL trade now. Time restrictions in place.");
                 }
             }
             else
             {
-                Print("Signal is neither BUY nor SELL: ", labelText);
+                Print("No signal change or invalid signal. No action taken.");
             }
         }
         else

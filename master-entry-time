@@ -11,7 +11,21 @@ input double lotSize = 0.01;  // Set your lot size here
 bool IsOpenTradeAllowed()
 {
     int hour = TimeHour(TimeCurrent());
-    return ((hour >= 1 && hour < 23) || (hour >= 13 && hour < 18));
+    int minute = TimeMinute(TimeCurrent());
+
+    // Interval 1: 08:30 – 10:00
+    if ((hour == 8 && minute >= 30) || (hour == 9) || (hour == 10 && minute == 0))
+        return true;
+
+    // Interval 2: 14:00 – 16:00
+    if ((hour >= 14 && hour < 16) || (hour == 16 && minute == 0))
+        return true;
+
+    // Interval 3: 17:00 – 18:00
+    if ((hour == 17) || (hour == 18 && minute == 0))
+        return true;
+
+    return false;
 }
 
 int OnInit()

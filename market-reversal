@@ -1,0 +1,122 @@
+//+------------------------------------------------------------------+
+//|                             r0DL_PatternTrader.mq4               |
+//|   Trade on direction change: multiple trades same side allowed   |
+//+------------------------------------------------------------------+
+#property strict
+
+input double LotSize = 0.01;
+
+string lastDirection = "";  // One candle ago
+
+int OnInit()
+{
+    Print("EA initialized. Waiting for pattern...");
+    return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+    Print("EA stopped.");
+}
+
+void OnTick()
+{
+    static datetime lastBarTime = 0;
+    datetime currentBarTime = iTime(Symbol(), PERIOD_M1, 0);
+    if (currentBarTime == lastBarTime)
+        return;  // Wait for new bar
+    lastBarTime = currentBarTime;
+
+    // Step 1: Read current direction from r0DL
+    string currentDirection = "";
+    if (ObjectFind(0, "r0DL") >= 0)
+    {
+        string desc = ObjectDescription("r0DL");
+        if (StringFind(desc, "Bearish") != -1)
+            currentDirection = "Bearish";
+        else if (StringFind(desc, "Bullish") != -1)
+            currentDirection = "Bullish";
+        else
+            return; // Unknown direction
+    }
+    else
+    {
+        Print("Object 'r0DL' not found.");
+        return;
+    }
+
+    // Step 2: Read symbol name from r0Symbol (for logging)
+    string labelSymbol = "";
+    if (ObjectFind(0, "r0Symbol") >= 0)
+    {
+        labelSymbol = ObjectDescription("r0Symbol");
+    }
+    else
+    {
+        Print("Object 'r0Symbol' not found.");
+        return;
+    }
+
+    // If this is the first bar, just set lastDirection and return
+    if (lastDirection == "")
+    {
+        lastDirection = currentDirection;
+        return;
+    }
+
+    string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+    Print("Signal: ", currentDirection, " | Symbol: ", labelSymbol, " | Time: ", timeStr);
+
+    // Step 3: Trading logic
+    // Bearish → Bullish: open BUY, close all SELL
+    if (lastDirection == "Bearish" && currentDirection == "Bullish")
+    {
+        CloseAllTrades(OP_SELL);
+        OpenTrade(OP_BUY);
+    }
+    // Bullish → Bearish: open SELL, close all BUY
+    else if (lastDirection == "Bullish" && currentDirection == "Bearish")
+    {
+        CloseAllTrades(OP_BUY);
+        OpenTrade(OP_SELL);
+    }
+
+    // Step 4: Update lastDirection
+    lastDirection = currentDirection;
+}
+
+//+------------------------------------------------------------------+
+//| Opens a trade of the given type                                  |
+//+------------------------------------------------------------------+
+void OpenTrade(int type)
+{
+    double price = (type == OP_BUY) ? Ask : Bid;
+    int slippage = 3;
+
+    int ticket = OrderSend(Symbol(), type, LotSize, price, slippage, 0, 0, "r0DL EA", 0, 0, clrBlue);
+    if (ticket > 0)
+        Print((type == OP_BUY ? "BUY" : "SELL"), " trade opened. Ticket: ", ticket);
+    else
+        Print("Failed to open trade. Error: ", GetLastError());
+}
+
+//+------------------------------------------------------------------+
+//| Closes all trades of given type                                  |
+//+------------------------------------------------------------------+
+void CloseAllTrades(int type)
+{
+    for (int i = OrdersTotal() - 1; i >= 0; i--)
+    {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if (OrderSymbol() == Symbol() && OrderType() == type)
+            {
+                double closePrice = (type == OP_BUY) ? Bid : Ask;
+                if (OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrRed))
+                    Print("Closed ", (type == OP_BUY ? "BUY" : "SELL"), " trade. Ticket: ", OrderTicket());
+                else
+                    Print("Failed to close trade. Error: ", GetLastError());
+            }
+        }
+    }
+}

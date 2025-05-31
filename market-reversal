@@ -1,16 +1,14 @@
 //+------------------------------------------------------------------+
-//|                             r0DL_PatternTrader.mq4               |
-//|   Trade on direction change: multiple trades same side allowed   |
+//|                         r0DL_AG_Trader.mq4                       |
+//|   Trade based on current direction + r0AG == "1 bars ago"       |
 //+------------------------------------------------------------------+
 #property strict
 
 input double LotSize = 0.01;
 
-string lastDirection = "";  // One candle ago
-
 int OnInit()
 {
-    Print("EA initialized. Waiting for pattern...");
+    Print("EA initialized. Waiting for r0DL + r0AG pattern...");
     return INIT_SUCCEEDED;
 }
 
@@ -27,7 +25,7 @@ void OnTick()
         return;  // Wait for new bar
     lastBarTime = currentBarTime;
 
-    // Step 1: Read current direction from r0DL
+    // Step 1: Get direction from r0DL
     string currentDirection = "";
     if (ObjectFind(0, "r0DL") >= 0)
     {
@@ -37,7 +35,7 @@ void OnTick()
         else if (StringFind(desc, "Bullish") != -1)
             currentDirection = "Bullish";
         else
-            return; // Unknown direction
+            return; // No valid signal
     }
     else
     {
@@ -45,44 +43,40 @@ void OnTick()
         return;
     }
 
-    // Step 2: Read symbol name from r0Symbol (for logging)
-    string labelSymbol = "";
-    if (ObjectFind(0, "r0Symbol") >= 0)
+    // Step 2: Read bar age from r0AG
+    string barAgeText = "";
+    if (ObjectFind(0, "r0AG") >= 0)
     {
-        labelSymbol = ObjectDescription("r0Symbol");
+        barAgeText = ObjectDescription("r0AG");
     }
     else
     {
-        Print("Object 'r0Symbol' not found.");
+        Print("Object 'r0AG' not found.");
         return;
     }
 
-    // If this is the first bar, just set lastDirection and return
-    if (lastDirection == "")
+    // Step 3: Check if bar age is exactly "1 bars ago"
+    if (barAgeText != "1 bars ago")
     {
-        lastDirection = currentDirection;
+        Print("r0AG is not 1 bar ago. Skipping.");
         return;
     }
 
+    // Step 4: Log signal
     string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
-    Print("Signal: ", currentDirection, " | Symbol: ", labelSymbol, " | Time: ", timeStr);
+    Print("Signal: ", currentDirection, " | Confirmed by r0AG='1 bars ago' | Time: ", timeStr);
 
-    // Step 3: Trading logic
-    // Bearish → Bullish: open BUY, close all SELL
-    if (lastDirection == "Bearish" && currentDirection == "Bullish")
+    // Step 5: Trade based on current direction
+    if (currentDirection == "Bullish")
     {
-        CloseAllTrades(OP_SELL);
+        CloseAllTrades(OP_SELL);  // Close opposite trades
         OpenTrade(OP_BUY);
     }
-    // Bullish → Bearish: open SELL, close all BUY
-    else if (lastDirection == "Bullish" && currentDirection == "Bearish")
+    else if (currentDirection == "Bearish")
     {
-        CloseAllTrades(OP_BUY);
+        CloseAllTrades(OP_BUY);  // Close opposite trades
         OpenTrade(OP_SELL);
     }
-
-    // Step 4: Update lastDirection
-    lastDirection = currentDirection;
 }
 
 //+------------------------------------------------------------------+

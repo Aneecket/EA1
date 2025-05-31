@@ -1,14 +1,16 @@
 //+------------------------------------------------------------------+
-//|                         r0DL_AG_Trader.mq4                       |
-//|   Trade based on current direction + r0AG == "1 bars ago"       |
+//|                      r0DL_AG_Trader_WithCooldown.mq4             |
+//|   Trade based on r0DL + r0AG == "1 bars ago" + 3-bar cooldown    |
 //+------------------------------------------------------------------+
 #property strict
 
 input double LotSize = 0.01;
 
+int lastTradeBar = -1000;  // Bar index when last trade was opened (initialized far back)
+
 int OnInit()
 {
-    Print("EA initialized. Waiting for r0DL + r0AG pattern...");
+    Print("EA initialized. Waiting for r0DL + r0AG pattern with cooldown...");
     return INIT_SUCCEEDED;
 }
 
@@ -25,7 +27,7 @@ void OnTick()
         return;  // Wait for new bar
     lastBarTime = currentBarTime;
 
-    // Step 1: Get direction from r0DL
+    // Step 1: Read direction from r0DL
     string currentDirection = "";
     if (ObjectFind(0, "r0DL") >= 0)
     {
@@ -35,7 +37,7 @@ void OnTick()
         else if (StringFind(desc, "Bullish") != -1)
             currentDirection = "Bullish";
         else
-            return; // No valid signal
+            return;
     }
     else
     {
@@ -55,10 +57,10 @@ void OnTick()
         return;
     }
 
-    // Step 3: Check if bar age is exactly "1 bars ago"
+    // Step 3: Proceed only if r0AG says "1 bars ago"
     if (barAgeText != "1 bars ago")
     {
-        Print("r0AG is not 1 bar ago. Skipping.");
+        Print("r0AG != '1 bars ago'. Skipping.");
         return;
     }
 
@@ -66,16 +68,36 @@ void OnTick()
     string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
     Print("Signal: ", currentDirection, " | Confirmed by r0AG='1 bars ago' | Time: ", timeStr);
 
-    // Step 5: Trade based on current direction
+    // Step 5: Handle trade logic with cooldown
+    int currentBar = Bars;
+
     if (currentDirection == "Bullish")
     {
-        CloseAllTrades(OP_SELL);  // Close opposite trades
-        OpenTrade(OP_BUY);
+        CloseAllTrades(OP_SELL);
+
+        if (currentBar - lastTradeBar >= 3)
+        {
+            OpenTrade(OP_BUY);
+            lastTradeBar = currentBar;
+        }
+        else
+        {
+            Print("Cooldown active: skipping BUY trade.");
+        }
     }
     else if (currentDirection == "Bearish")
     {
-        CloseAllTrades(OP_BUY);  // Close opposite trades
-        OpenTrade(OP_SELL);
+        CloseAllTrades(OP_BUY);
+
+        if (currentBar - lastTradeBar >= 3)
+        {
+            OpenTrade(OP_SELL);
+            lastTradeBar = currentBar;
+        }
+        else
+        {
+            Print("Cooldown active: skipping SELL trade.");
+        }
     }
 }
 

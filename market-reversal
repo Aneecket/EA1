@@ -1,12 +1,43 @@
-//+------------------------------------------------------------------+
-//|                      r0DL_AG_Trader_WithCooldown.mq4             |
-//|   Trade based on r0DL + r0AG == "1 bars ago" + 3-bar cooldown    |
-//+------------------------------------------------------------------+
 #property strict
 
 input double LotSize = 0.01;
 
-int lastTradeBar = -1000;  // Bar index when last trade was opened (initialized far back)
+// TP/SL configuration
+input bool EnableTPnSL = true;
+input int TakeProfitPoints = 100;
+input int StopLossPoints = 100;
+
+// Day restrictions
+input bool AllowFridayTrading = true;
+input bool AllowSaturdayTrading = false;
+input bool AllowSundayTrading = false;
+
+// Cooldown in minutes (assuming M1 chart and 3-bar cooldown)
+input int CooldownMinutes = 3;
+
+// Session Trading Time Controls
+input bool EnableMorningSession = true;
+input int MorningStartHour = 6;
+input int MorningStartMinute = 0;
+input int MorningEndHour = 11;
+input int MorningEndMinute = 59;
+
+input bool EnableAfternoonSession = true;
+input int AfternoonStartHour = 12;
+input int AfternoonStartMinute = 0;
+input int AfternoonEndHour = 17;
+input int AfternoonEndMinute = 59;
+
+input bool EnableEveningSession = true;
+input int EveningStartHour = 18;
+input int EveningStartMinute = 0;
+input int EveningEndHour = 23;
+input int EveningEndMinute = 59;
+
+// Multi-trade control
+input bool EnableMultipleTrades = true; 
+
+datetime lastTradeTime = D'1970.01.01 00:00';
 
 int OnInit()
 {
@@ -22,12 +53,26 @@ void OnDeinit(const int reason)
 void OnTick()
 {
     static datetime lastBarTime = 0;
-    datetime currentBarTime = iTime(Symbol(), PERIOD_M1, 0);
+    datetime currentBarTime = Time[0];
     if (currentBarTime == lastBarTime)
-        return;  // Wait for new bar
+        return;
     lastBarTime = currentBarTime;
 
-    // Step 1: Read direction from r0DL
+    int day = TimeDayOfWeek(TimeCurrent());
+    if ((day == 5 && !AllowFridayTrading) ||
+        (day == 6 && !AllowSaturdayTrading) ||
+        (day == 0 && !AllowSundayTrading))
+    {
+        Print("Trading not allowed today. Skipping...");
+        return;
+    }
+
+    if (!IsTradingSessionAllowed(TimeCurrent()))
+    {
+        Print("Outside allowed trading sessions. Skipping...");
+        return;
+    }
+
     string currentDirection = "";
     if (ObjectFind(0, "r0DL") >= 0)
     {
@@ -45,7 +90,6 @@ void OnTick()
         return;
     }
 
-    // Step 2: Read bar age from r0AG
     string barAgeText = "";
     if (ObjectFind(0, "r0AG") >= 0)
     {
@@ -57,28 +101,29 @@ void OnTick()
         return;
     }
 
-    // Step 3: Proceed only if r0AG says "1 bars ago"
     if (barAgeText != "1 bars ago")
     {
         Print("r0AG != '1 bars ago'. Skipping.");
         return;
     }
 
-    // Step 4: Log signal
     string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
     Print("Signal: ", currentDirection, " | Confirmed by r0AG='1 bars ago' | Time: ", timeStr);
-
-    // Step 5: Handle trade logic with cooldown
-    int currentBar = Bars;
 
     if (currentDirection == "Bullish")
     {
         CloseAllTrades(OP_SELL);
 
-        if (currentBar - lastTradeBar >= 3)
+        if (!EnableMultipleTrades && IsTradeOpen(OP_BUY))
+        {
+            Print("BUY trade already open. Skipping due to single trade restriction.");
+            return;
+        }
+
+        if (TimeCurrent() - lastTradeTime >= CooldownMinutes * 60)
         {
             OpenTrade(OP_BUY);
-            lastTradeBar = currentBar;
+            lastTradeTime = TimeCurrent();
         }
         else
         {
@@ -89,10 +134,16 @@ void OnTick()
     {
         CloseAllTrades(OP_BUY);
 
-        if (currentBar - lastTradeBar >= 3)
+        if (!EnableMultipleTrades && IsTradeOpen(OP_SELL))
+        {
+            Print("SELL trade already open. Skipping due to single trade restriction.");
+            return;
+        }
+
+        if (TimeCurrent() - lastTradeTime >= CooldownMinutes * 60)
         {
             OpenTrade(OP_SELL);
-            lastTradeBar = currentBar;
+            lastTradeTime = TimeCurrent();
         }
         else
         {
@@ -101,24 +152,64 @@ void OnTick()
     }
 }
 
-//+------------------------------------------------------------------+
-//| Opens a trade of the given type                                  |
-//+------------------------------------------------------------------+
+bool IsTradingSessionAllowed(datetime t)
+{
+    int hour = TimeHour(t);
+    int minute = TimeMinute(t);
+
+    if (EnableMorningSession &&
+        TimeInRange(hour, minute, MorningStartHour, MorningStartMinute, MorningEndHour, MorningEndMinute))
+        return true;
+
+    if (EnableAfternoonSession &&
+        TimeInRange(hour, minute, AfternoonStartHour, AfternoonStartMinute, AfternoonEndHour, AfternoonEndMinute))
+        return true;
+
+    if (EnableEveningSession &&
+        TimeInRange(hour, minute, EveningStartHour, EveningStartMinute, EveningEndHour, EveningEndMinute))
+        return true;
+
+    return false;
+}
+
+bool TimeInRange(int h, int m, int sh, int sm, int eh, int em)
+{
+    int current = h * 60 + m;
+    int start = sh * 60 + sm;
+    int end = eh * 60 + em;
+    return (current >= start && current <= end);
+}
+
 void OpenTrade(int type)
 {
     double price = (type == OP_BUY) ? Ask : Bid;
     int slippage = 3;
+    double tp = 0, sl = 0;
 
-    int ticket = OrderSend(Symbol(), type, LotSize, price, slippage, 0, 0, "r0DL EA", 0, 0, clrBlue);
+    if (EnableTPnSL)
+    {
+        double point = MarketInfo(Symbol(), MODE_POINT);
+        double multiplier = MarketInfo(Symbol(), MODE_DIGITS) == 3 || MarketInfo(Symbol(), MODE_DIGITS) == 5 ? 10.0 : 1.0;
+
+        if (type == OP_BUY)
+        {
+            tp = price + TakeProfitPoints * point * multiplier;
+            sl = price - StopLossPoints * point * multiplier;
+        }
+        else if (type == OP_SELL)
+        {
+            tp = price - TakeProfitPoints * point * multiplier;
+            sl = price + StopLossPoints * point * multiplier;
+        }
+    }
+
+    int ticket = OrderSend(Symbol(), type, LotSize, price, slippage, sl, tp, "r0DL EA", 0, 0, clrBlue);
     if (ticket > 0)
         Print((type == OP_BUY ? "BUY" : "SELL"), " trade opened. Ticket: ", ticket);
     else
         Print("Failed to open trade. Error: ", GetLastError());
 }
 
-//+------------------------------------------------------------------+
-//| Closes all trades of given type                                  |
-//+------------------------------------------------------------------+
 void CloseAllTrades(int type)
 {
     for (int i = OrdersTotal() - 1; i >= 0; i--)
@@ -135,4 +226,17 @@ void CloseAllTrades(int type)
             }
         }
     }
+}
+
+bool IsTradeOpen(int type)
+{
+    for (int i = OrdersTotal() - 1; i >= 0; i--)
+    {
+        if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+        {
+            if (OrderSymbol() == Symbol() && OrderType() == type)
+                return true;
+        }
+    }
+    return false;
 }

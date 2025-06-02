@@ -12,7 +12,7 @@ input bool AllowFridayTrading = true;
 input bool AllowSaturdayTrading = false;
 input bool AllowSundayTrading = false;
 
-// Cooldown in minutes (assuming M1 chart and 3-bar cooldown)
+// Cooldown in minutes
 input int CooldownMinutes = 3;
 
 // Session Trading Time Controls
@@ -35,7 +35,7 @@ input int EveningEndHour = 23;
 input int EveningEndMinute = 59;
 
 // Multi-trade control
-input bool EnableMultipleTrades = true; 
+input bool EnableMultipleTrades = true;
 
 datetime lastTradeTime = D'1970.01.01 00:00';
 
@@ -64,12 +64,6 @@ void OnTick()
         (day == 0 && !AllowSundayTrading))
     {
         Print("Trading not allowed today. Skipping...");
-        return;
-    }
-
-    if (!IsTradingSessionAllowed(TimeCurrent()))
-    {
-        Print("Outside allowed trading sessions. Skipping...");
         return;
     }
 
@@ -110,10 +104,26 @@ void OnTick()
     string timeStr = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
     Print("Signal: ", currentDirection, " | Confirmed by r0AG='1 bars ago' | Time: ", timeStr);
 
+    // === Trade Closing Always Allowed ===
     if (currentDirection == "Bullish")
     {
         CloseAllTrades(OP_SELL);
+    }
+    else if (currentDirection == "Bearish")
+    {
+        CloseAllTrades(OP_BUY);
+    }
 
+    // === Trade Opening Only in Allowed Hours ===
+    if (!IsTradingSessionAllowed(TimeCurrent()))
+    {
+        Print("Outside allowed trading sessions. Skipping trade opening...");
+        return;
+    }
+
+    // === Trade Opening with Cooldown Check ===
+    if (currentDirection == "Bullish")
+    {
         if (!EnableMultipleTrades && IsTradeOpen(OP_BUY))
         {
             Print("BUY trade already open. Skipping due to single trade restriction.");
@@ -132,8 +142,6 @@ void OnTick()
     }
     else if (currentDirection == "Bearish")
     {
-        CloseAllTrades(OP_BUY);
-
         if (!EnableMultipleTrades && IsTradeOpen(OP_SELL))
         {
             Print("SELL trade already open. Skipping due to single trade restriction.");

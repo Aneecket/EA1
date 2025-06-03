@@ -1,0 +1,67 @@
+#property strict
+
+datetime lastBarTime = 0;
+
+void OnInit()
+{
+    Print("EA Initialized - Will print objects with descriptions at the close of each bar");
+}
+
+void OnDeinit(const int reason)
+{
+    Print("EA Deinitialized");
+}
+
+void OnTick()
+{
+    datetime currentBarTime = Time[0];
+    if (currentBarTime != lastBarTime)
+    {
+        lastBarTime = currentBarTime;
+        PrintObjectsWithDescriptions();
+    }
+}
+
+void PrintObjectsWithDescriptions()
+{
+    int totalObjects = ObjectsTotal();
+    Print("Total objects on chart: ", totalObjects);
+
+    for (int i = 0; i < totalObjects; i++)
+    {
+        string objName = ObjectName(i);
+        if (objName == "") continue;
+
+        string desc = ObjectDescription(objName);
+        if (desc == "") continue;  // Skip objects with empty description
+
+        int objType = ObjectType(objName);
+        string objTypeName = GetObjectTypeName(objType);
+
+        string text = ObjectGetString(0, objName, OBJPROP_TEXT);
+
+        PrintFormat(
+            "Object #%d: Name='%s', Type=%s, Description='%s', Text='%s'",
+            i, objName, objTypeName, desc, text
+        );
+    }
+}
+
+// Helper function to convert object type integer to readable string
+string GetObjectTypeName(int type)
+{
+    switch(type)
+    {
+        case OBJ_TEXT: return "OBJ_TEXT";
+        case OBJ_LABEL: return "OBJ_LABEL";
+        case OBJ_TREND: return "OBJ_TREND";
+        case OBJ_HLINE: return "OBJ_HLINE";
+        case OBJ_VLINE: return "OBJ_VLINE";
+        case OBJ_ARROW: return "OBJ_ARROW";
+        case OBJ_RECTANGLE: return "OBJ_RECTANGLE";
+        case OBJ_CHANNEL: return "OBJ_CHANNEL";
+        case OBJ_FIBO: return "OBJ_FIBO";
+        // Add more if needed
+        default: return "UNKNOWN(" + IntegerToString(type) + ")";
+    }
+}

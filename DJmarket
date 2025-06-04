@@ -1,0 +1,128 @@
+//+------------------------------------------------------------------+
+//|                                              TrendTraderEA.mq4  |
+//|                                  ©2025 YourName                  |
+//+------------------------------------------------------------------+
+#property strict
+
+input double LotSize = 0.01;
+string LabelName = "W25";
+input int StartHour = 6;    // Trading start hour (inclusive)
+input int EndHour   = 18;   // Trading end hour (exclusive)
+string lastTrend = "";
+string currentTrend = "";
+
+
+datetime lastBarTime = 0;
+
+//+------------------------------------------------------------------+
+//| Expert initialization                                            |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("TrendTraderEA initialized.");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization                                          |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("TrendTraderEA deinitialized.");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick                                                      |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Only act at the end of a bar
+   if (Time[0] == lastBarTime) return;
+   lastBarTime = Time[0];
+
+   // Shift the current trend to last trend
+   lastTrend = currentTrend;
+
+   // Get the latest trend from the label
+   currentTrend = StringTrimLeft(StringTrimRight(ObjectGetString(0, LabelName, OBJPROP_TEXT)));
+
+   if (currentTrend == "")
+   {
+      Print("Label '", LabelName, "' not found or empty.");
+      return;
+   }
+
+   Print("Current Trend: ", currentTrend, " | Last Trend: ", lastTrend);
+
+   int currentHour = TimeHour(TimeCurrent());
+
+   // Only act on trend change and within allowed time
+   if (currentTrend == "UP TREND" && lastTrend == "DOWN TREND")
+   {
+      CloseTrades(OP_SELL); // Always allow closing
+
+      if (currentHour >= StartHour && currentHour < EndHour)
+      {
+         if (!IsTradeOpen(OP_BUY))
+         {
+            Print("Opening Buy Trade");
+            OrderSend(Symbol(), OP_BUY, LotSize, Ask, 10, 0, 0, "Buy Order", 0, 0, clrBlue);
+         }
+      }
+   }
+   else if (currentTrend == "DOWN TREND" && lastTrend == "UP TREND")
+   {
+      CloseTrades(OP_BUY); // Always allow closing
+
+      if (currentHour >= StartHour && currentHour < EndHour)
+      {
+         if (!IsTradeOpen(OP_SELL))
+         {
+            Print("Opening Sell Trade");
+            OrderSend(Symbol(), OP_SELL, LotSize, Bid, 10, 0, 0, "Sell Order", 0, 0, clrRed);
+         }
+      }
+   }
+   else
+   {
+      // Do nothing if trend didn't change meaningfully
+      Print("No valid trend transition for trading.");
+   }
+}
+
+
+//+------------------------------------------------------------------+
+//| Close trades of a given type                                     |
+//+------------------------------------------------------------------+
+void CloseTrades(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderType() == type)
+         {
+            if (type == OP_BUY)
+               OrderClose(OrderTicket(), OrderLots(), Bid, 10, clrRed);
+            else if (type == OP_SELL)
+               OrderClose(OrderTicket(), OrderLots(), Ask, 10, clrBlue);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if a trade of the given type is already open               |
+//+------------------------------------------------------------------+
+bool IsTradeOpen(int type)
+{
+   for (int i = 0; i < OrdersTotal(); i++)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderType() == type)
+            return true;
+      }
+   }
+   return false;
+}

@@ -1,0 +1,35 @@
+//+------------------------------------------------------------------+
+//|                                            CrystalFX_ProbeEA.mq4 |
+//|                             Sandeep's EA for Buffer Inspection   |
+//+------------------------------------------------------------------+
+#property strict
+
+input string IndicatorName = "CrystalFX_AGGRESSIVE.ex4"; // Indicator filename
+input int BuffersToCheck = 100;       // Max number of buffers to inspect
+input int BarsToCheck = 100;        // Last N bars to check (starting from bar 0)
+
+int OnInit() {
+    Print("EA Initialized. Probing indicator buffers...");
+    return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason) {
+    Print("EA Removed.");
+}
+
+void OnTick() {
+    static bool probed = false;
+    if (probed) return;  // Run once on first tick
+
+    for (int buffer = 0; buffer < BuffersToCheck; buffer++) {
+        Print("🔎 Probing Buffer #", buffer);
+        for (int i = 0; i < BarsToCheck; i++) {
+            double val = iCustom(NULL, 0, IndicatorName, buffer, i);
+            if (val != EMPTY_VALUE && val != 0.0) {
+                Print("Buffer[", buffer, "] Bar[", i, "] Value: ", val);
+            }
+        }
+    }
+
+    probed = true;
+}

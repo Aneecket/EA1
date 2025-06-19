@@ -1,1 +1,203 @@
+//+------------------------------------------------------------------+
+//|                                           TrendFilterTradeEA.mq4 |
+//|     HA EA with Martingale, Loss Threshold, Magic, Chart Display |
+//+------------------------------------------------------------------+
+#property strict
+
+extern double LotSize = 0.01;
+extern int    MA_Filter_Period = 20;
+extern int    MA_Method = MODE_EMA;
+extern int    Slippage = 100;
+
+extern bool   EnableMartingale = true;
+extern double MartingaleFactor = 2.0;
+extern double MaxLotSize = 10.0;
+extern int    MartingaleAfterLossCount = 1;
+
+int MagicNumber = 0;
+
+string lastSignal = "";
+datetime lastProcessedCandle = 0;
+double lastUsedLotSize = 0.01;
+int consecutiveLosses = 0;
+
+int OnInit()
+{
+   lastUsedLotSize = LotSize;
+   consecutiveLosses = 0;
+
+   // ✅ Auto-generated Magic Number (e.g. EURUSD M15 -> unique number)
+   MagicNumber = StringToInteger(StringSubstr(Symbol(), 0, 6)) + Period();
+
+   Print("EA Initialized | Symbol: ", Symbol(), " | TF: ", Period(), " | Magic: ", MagicNumber);
+   return(INIT_SUCCEEDED);
+}
+
+void OnTick()
+{
+   if (!IsTradeAllowed()) return;
+   RefreshRates();
+
+   DrawInfoPanel();
+
+   int i = 2;
+   double haClose2 = (Open[2] + High[2] + Low[2] + Close[2]) / 4;
+   double haOpen2  = (2 == Bars - 1) ? (Open[2] + Close[2]) / 2 : (Open[2] + Close[2]) / 2;
+
+   i = 1;
+   double haClose = (Open[i] + High[i] + Low[i] + Close[i]) / 4;
+   double haOpen  = (i == Bars - 1) ? (Open[i] + Close[i]) / 2 : (haOpen2 + haClose2) / 2;
+   double haHigh  = MathMax(High[i], MathMax(haOpen, haClose));
+   double haLow   = MathMin(Low[i], MathMin(haOpen, haClose));
+   double ma = iMA(NULL, 0, MA_Filter_Period, 0, MA_Method, PRICE_CLOSE, i);
+
+   string signal = "NO SIGNAL";
+
+   if (haClose > haOpen && haClose > ma && haOpen > haLow && haClose > High[2])
+      signal = "BUY";
+   else if (haClose < haOpen && haClose < ma && haOpen < haHigh && haClose < Low[2])
+      signal = "SELL";
+
+   if (Time[1] == lastProcessedCandle)
+      return;
+   lastProcessedCandle = Time[1];
+   Print("Signal: ", signal);
+
+   if (signal == "NO SIGNAL" || signal == lastSignal)
+      return;
+
+   // ✅ Evaluate last trade (history)
+   for (int j = OrdersHistoryTotal() - 1; j >= 0; j--)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_HISTORY))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if (OrderCloseTime() > 0 && (OrderType() == OP_BUY || OrderType() == OP_SELL))
+            {
+               if (OrderProfit() < 0)
+               {
+                  consecutiveLosses++;
+                  Print("Loss. Consecutive losses: ", consecutiveLosses);
+               }
+               else
+               {
+                  consecutiveLosses = 0;
+                  lastUsedLotSize = LotSize;
+                  Print("Profit. Resetting Martingale.");
+               }
+
+               if (EnableMartingale && consecutiveLosses >= MartingaleAfterLossCount)
+               {
+                  lastUsedLotSize *= MartingaleFactor;
+                  if (lastUsedLotSize > MaxLotSize)
+                     lastUsedLotSize = MaxLotSize;
+               }
+               else
+               {
+                  lastUsedLotSize = LotSize;
+               }
+               break;
+            }
+         }
+      }
+   }
+
+   // ✅ Close opposite trade
+   for (int j = OrdersTotal() - 1; j >= 0; j--)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_SELL) ||
+                (signal == "SELL" && OrderType() == OP_BUY))
+            {
+               bool closed = OrderClose(OrderTicket(), OrderLots(), (OrderType() == OP_BUY ? Bid : Ask), Slippage, clrRed);
+               if (closed)
+                  Print("Closed ", (OrderType() == OP_BUY ? "BUY" : "SELL"), " order.");
+               else
+                  Print("Failed to close order. Error: ", GetLastError());
+            }
+         }
+      }
+   }
+
+   // ✅ Check if already correct order exists
+   bool hasCorrectOrder = false;
+   for (int j = 0; j < OrdersTotal(); j++)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_BUY) ||
+                (signal == "SELL" && OrderType() == OP_SELL))
+            {
+               hasCorrectOrder = true;
+               break;
+            }
+         }
+      }
+   }
+
+   // ✅ Open new order
+   if (!hasCorrectOrder)
+   {
+      int ticket;
+      if (signal == "BUY")
+      {
+         ticket = OrderSend(Symbol(), OP_BUY, lastUsedLotSize, Ask, Slippage, 0, 0, "HA BUY", MagicNumber, 0, clrBlue);
+         if (ticket > 0)
+            Print("Opened BUY order. Lot: ", lastUsedLotSize);
+         else
+            Print("Failed to open BUY. Error: ", GetLastError());
+      }
+      else if (signal == "SELL")
+      {
+         ticket = OrderSend(Symbol(), OP_SELL, lastUsedLotSize, Bid, Slippage, 0, 0, "HA SELL", MagicNumber, 0, clrRed);
+         if (ticket > 0)
+            Print("Opened SELL order. Lot: ", lastUsedLotSize);
+         else
+            Print("Failed to open SELL. Error: ", GetLastError());
+      }
+   }
+
+   lastSignal = signal;
+}
+
+//+------------------------------------------------------------------+
+//| Draw Info Panel on Chart                                         |
+//+------------------------------------------------------------------+
+void DrawInfoPanel()
+{
+   double pnl = 0.0;
+   for (int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_HISTORY))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((OrderType() == OP_BUY || OrderType() == OP_SELL) && OrderCloseTime() > 0)
+               pnl += OrderProfit();
+         }
+      }
+   }
+
+   string panelText = 
+      "EA: TrendFilter with Martingale\n" +
+      "Symbol: " + Symbol() + "\n" +
+      "Timeframe: " + Period() + "\n" +
+      "Magic Number: " + IntegerToString(MagicNumber) + "\n" +
+      "Consecutive Losses: " + IntegerToString(consecutiveLosses) + "\n" +
+      "Current Lot Size: " + DoubleToString(lastUsedLotSize, 2) + "\n" +
+      "Total PnL: " + DoubleToString(pnl, 2);
+
+   string name = "HA_EA_InfoPanel";
+   if (!ObjectCreate(name, OBJ_LABEL, 0, 0, 0))
+      ObjectSet(name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetText(name, panelText, 11, "Arial", clrWhite);
+   ObjectSet(name, OBJPROP_XDISTANCE, 10);
+   ObjectSet(name, OBJPROP_YDISTANCE, 20);
+}
 

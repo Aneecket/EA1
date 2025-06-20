@@ -1,0 +1,188 @@
+//+------------------------------------------------------------------+
+//|                                 TrendFilterMartingaleEA.mq4      |
+//|    HA EA with Martingale, Fast P/L Tracking, and Instant Trade   |
+//+------------------------------------------------------------------+
+#property strict
+
+extern double LotSize = 0.01;
+extern int    MA_Filter_Period = 20;
+extern int    MA_Method = MODE_EMA;
+extern int    Slippage = 100;
+
+extern bool   EnableMartingale = true;
+extern double MartingaleFactor = 2.0;
+extern double MaxLotSize = 10.0;
+extern double MaxCumulativeLoss = 5.0;
+
+int MagicNumber;
+
+string lastSignal = "";
+double lastUsedLotSize = 0.01;
+datetime lastProcessedTradeTime = 0;
+double cumulativeLoss = 0.0;
+
+bool waitAfterClose = false;
+datetime waitStartTime = 0;
+int pauseSeconds = 10;
+
+int GenerateMagicNumber()
+{
+   return (int)TimeLocal();  // unique per chart
+}
+
+int OnInit()
+{
+   MagicNumber = GenerateMagicNumber();
+   Print("🟢 EA Initialized | Symbol: ", Symbol(), " | TF: ", Period(), " | Magic: ", MagicNumber);
+   return(INIT_SUCCEEDED);
+}
+
+void OnTick()
+{
+   if (!IsTradeAllowed()) return;
+   RefreshRates();
+
+   // ⏳ Wait logic after trade close
+   if (waitAfterClose)
+   {
+      int elapsed = TimeCurrent() - waitStartTime;
+      if (elapsed < pauseSeconds)
+      {
+         Print("⏳ Waiting... ", pauseSeconds - elapsed, "s left");
+         return;
+      }
+      else
+      {
+         waitAfterClose = false;
+         Print("✅ Wait over. Resuming.");
+      }
+   }
+
+   // ✅ Heiken Ashi + MA Signal Calculation (per tick, no candle wait)
+   int i = 2;
+   double haClose2 = (Open[2] + High[2] + Low[2] + Close[2]) / 4;
+   double haOpen2  = (Open[2] + Close[2]) / 2;
+
+   i = 1;
+   double haClose = (Open[i] + High[i] + Low[i] + Close[i]) / 4;
+   double haOpen  = (haOpen2 + haClose2) / 2;
+   double haHigh  = MathMax(High[i], MathMax(haOpen, haClose));
+   double haLow   = MathMin(Low[i], MathMin(haOpen, haClose));
+   double ma = iMA(NULL, 0, MA_Filter_Period, 0, MA_Method, PRICE_CLOSE, i);
+
+   string signal = "NO SIGNAL";
+   if (haClose > haOpen && haClose > ma && haOpen > haLow && haClose > High[2])
+      signal = "BUY";
+   else if (haClose < haOpen && haClose < ma && haOpen < haHigh && haClose < Low[2])
+      signal = "SELL";
+
+  // Print("📍 Signal: ", signal);
+
+   if (signal == "NO SIGNAL" || signal == lastSignal)
+      return;
+
+   // ✅ Close Opposite Order and update cumulativeLoss immediately
+   for (int j = OrdersTotal() - 1; j >= 0; j--)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_SELL) ||
+                (signal == "SELL" && OrderType() == OP_BUY))
+            {
+               double closePrice = (OrderType() == OP_BUY ? Bid : Ask);
+               bool closed = OrderClose(OrderTicket(), OrderLots(), closePrice, Slippage, clrRed);
+
+               if (closed)
+               {
+                  Print("✅ Closed opposite order | Ticket: ", OrderTicket());
+
+                  if (OrderSelect(OrderTicket(), SELECT_BY_TICKET, MODE_HISTORY))
+                  {
+                     double profit = OrderProfit();
+                     cumulativeLoss += profit;
+
+                     if (profit < 0)
+                        Print("🔴 (Post-Close) Loss: ", DoubleToString(profit, 2), " | New Cumulative: ", DoubleToString(cumulativeLoss, 2));
+                     else
+                        Print("🟢 (Post-Close) Profit: ", DoubleToString(profit, 2), " | New Cumulative: ", DoubleToString(cumulativeLoss, 2));
+
+                     waitAfterClose = true;
+                     waitStartTime = TimeCurrent();
+                     return;  // Wait 10 seconds before placing new trade
+                  }
+               }
+               else
+               {
+                  Print("❌ Close failed | Error: ", GetLastError());
+               }
+            }
+         }
+      }
+   }
+
+   // ✅ Adjust lot size based on updated cumulativeLoss
+if (EnableMartingale && cumulativeLoss < 0)
+{
+    if (MathAbs(cumulativeLoss) >= MaxCumulativeLoss)
+    {
+        Print("🛑 Max cumulative loss reached (", DoubleToString(cumulativeLoss, 2), 
+              "). Resetting lot size and loss.");
+        cumulativeLoss = 0.0;
+        lastUsedLotSize = LotSize;
+    }
+    else
+    {
+        lastUsedLotSize *= MartingaleFactor;
+        if (lastUsedLotSize > MaxLotSize)
+            lastUsedLotSize = MaxLotSize;
+        Print("🔁 Martingale Active. Cumulative Loss: ", DoubleToString(cumulativeLoss, 2),
+              " | Using Lot: ", DoubleToString(lastUsedLotSize, 2));
+    }
+}
+   else
+   {
+      if (cumulativeLoss >= 0)
+      {
+         cumulativeLoss = 0.0;
+         lastUsedLotSize = LotSize;
+         Print("✅ Recovered. Resetting Lot & Loss.");
+      }
+   }
+
+   // ✅ Skip if correct trade is already open
+   bool hasCorrectOrder = false;
+   for (int j = 0; j < OrdersTotal(); j++)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_BUY) ||
+                (signal == "SELL" && OrderType() == OP_SELL))
+            {
+               hasCorrectOrder = true;
+               break;
+            }
+         }
+      }
+   }
+
+   // ✅ Open new trade immediately if no correct order
+   if (!hasCorrectOrder)
+   {
+      int ticket = -1;
+      if (signal == "BUY")
+         ticket = OrderSend(Symbol(), OP_BUY, lastUsedLotSize, Ask, Slippage, 0, 0, "HA BUY", MagicNumber, 0, clrBlue);
+      else if (signal == "SELL")
+         ticket = OrderSend(Symbol(), OP_SELL, lastUsedLotSize, Bid, Slippage, 0, 0, "HA SELL", MagicNumber, 0, clrRed);
+
+      if (ticket > 0)
+         Print("🚀 Opened ", signal, " | Ticket: ", ticket, " | Lot: ", DoubleToString(lastUsedLotSize, 2));
+      else
+         Print("❌ Failed to open ", signal, " | Error: ", GetLastError());
+   }
+
+   lastSignal = signal;
+}

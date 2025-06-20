@@ -59,13 +59,14 @@ void OnTick()
    }
 
    // ✅ Heiken Ashi + MA Signal Calculation (per tick, no candle wait)
+
    int i = 2;
    double haClose2 = (Open[2] + High[2] + Low[2] + Close[2]) / 4;
-   double haOpen2  = (Open[2] + Close[2]) / 2;
+   double haOpen2  = (2 == Bars - 1) ? (Open[2] + Close[2]) / 2 : (Open[2] + Close[2]) / 2;
 
    i = 1;
    double haClose = (Open[i] + High[i] + Low[i] + Close[i]) / 4;
-   double haOpen  = (haOpen2 + haClose2) / 2;
+   double haOpen  = (i == Bars - 1) ? (Open[i] + Close[i]) / 2 : (haOpen2 + haClose2) / 2;
    double haHigh  = MathMax(High[i], MathMax(haOpen, haClose));
    double haLow   = MathMin(Low[i], MathMin(haOpen, haClose));
    double ma = iMA(NULL, 0, MA_Filter_Period, 0, MA_Method, PRICE_CLOSE, i);

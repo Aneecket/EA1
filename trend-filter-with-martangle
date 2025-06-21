@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
-//|                                 TrendFilterMartingaleEA.mq4      |
-//|    HA EA with Martingale, Fast P/L Tracking, and Instant Trade   |
+//|                          TrendFilterMartingaleEA.mq4             |
+//|     HA EA with Flexible Martingale Logic + Instant Re-entry     |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -10,16 +10,19 @@ extern int    MA_Method = MODE_EMA;
 extern int    Slippage = 100;
 
 extern bool   EnableMartingale = true;
+extern string TradingStrategy = "cumulative"; // "cumulative" or "last_trade"
 extern double MartingaleFactor = 2.0;
 extern double MaxLotSize = 10.0;
 extern double MaxCumulativeLoss = 5.0;
+extern double MaxLastTradeLoss = 5.0;
+
 
 int MagicNumber;
 
 string lastSignal = "";
 double lastUsedLotSize = 0.01;
-datetime lastProcessedTradeTime = 0;
 double cumulativeLoss = 0.0;
+double lastTradeProfit = 0.0;
 
 bool waitAfterClose = false;
 datetime waitStartTime = 0;
@@ -27,7 +30,7 @@ int pauseSeconds = 10;
 
 int GenerateMagicNumber()
 {
-   return (int)TimeLocal();  // unique per chart
+   return (int)TimeLocal();
 }
 
 int OnInit()
@@ -42,7 +45,7 @@ void OnTick()
    if (!IsTradeAllowed()) return;
    RefreshRates();
 
-   // ⏳ Wait logic after trade close
+   // ⏳ Pause logic
    if (waitAfterClose)
    {
       int elapsed = TimeCurrent() - waitStartTime;
@@ -58,9 +61,8 @@ void OnTick()
       }
    }
 
-   // ✅ Heiken Ashi + MA Signal Calculation (per tick, no candle wait)
-
-   int i = 2;
+   // ✅ Signal Calculation (Heiken Ashi + MA)
+ int i = 2;
    double haClose2 = (Open[2] + High[2] + Low[2] + Close[2]) / 4;
    double haOpen2  = (2 == Bars - 1) ? (Open[2] + Close[2]) / 2 : (Open[2] + Close[2]) / 2;
 
@@ -77,12 +79,12 @@ void OnTick()
    else if (haClose < haOpen && haClose < ma && haOpen < haHigh && haClose < Low[2])
       signal = "SELL";
 
-  // Print("📍 Signal: ", signal);
+ //  Print("📍 Signal: ", signal);
 
    if (signal == "NO SIGNAL" || signal == lastSignal)
       return;
 
-   // ✅ Close Opposite Order and update cumulativeLoss immediately
+   // ✅ Close Opposite Order
    for (int j = OrdersTotal() - 1; j >= 0; j--)
    {
       if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
@@ -102,16 +104,21 @@ void OnTick()
                   if (OrderSelect(OrderTicket(), SELECT_BY_TICKET, MODE_HISTORY))
                   {
                      double profit = OrderProfit();
-                     cumulativeLoss += profit;
+                     lastTradeProfit = profit;
+
+                     if (TradingStrategy == "cumulative")
+                        cumulativeLoss += profit;
 
                      if (profit < 0)
-                        Print("🔴 (Post-Close) Loss: ", DoubleToString(profit, 2), " | New Cumulative: ", DoubleToString(cumulativeLoss, 2));
+                        Print("🔴 (Post-Close) Loss: ", DoubleToString(profit, 2),
+                              " | Cumulative: ", DoubleToString(cumulativeLoss, 2));
                      else
-                        Print("🟢 (Post-Close) Profit: ", DoubleToString(profit, 2), " | New Cumulative: ", DoubleToString(cumulativeLoss, 2));
+                        Print("🟢 (Post-Close) Profit: ", DoubleToString(profit, 2),
+                              " | Cumulative: ", DoubleToString(cumulativeLoss, 2));
 
                      waitAfterClose = true;
                      waitStartTime = TimeCurrent();
-                     return;  // Wait 10 seconds before placing new trade
+                     return;  // Wait before opening new trade
                   }
                }
                else
@@ -123,36 +130,57 @@ void OnTick()
       }
    }
 
-   // ✅ Adjust lot size based on updated cumulativeLoss
-if (EnableMartingale && cumulativeLoss < 0)
+   // ✅ Lot Size Decision Based on Strategy
+   if (EnableMartingale)
+   {
+      if (TradingStrategy == "cumulative" && cumulativeLoss < 0)
+      {
+         if (MathAbs(cumulativeLoss) >= MaxCumulativeLoss)
+         {
+            Print("🛑 Max cumulative loss reached. Resetting.");
+            cumulativeLoss = 0.0;
+            lastUsedLotSize = LotSize;
+         }
+         else
+         {
+            lastUsedLotSize *= MartingaleFactor;
+            if (lastUsedLotSize > MaxLotSize)
+               lastUsedLotSize = MaxLotSize;
+            Print("🔁 Martingale (Cumulative) | Lot: ", DoubleToString(lastUsedLotSize, 2),
+                  " | Cumulative Loss: ", DoubleToString(cumulativeLoss, 2));
+         }
+      }
+else if (TradingStrategy == "last_trade" && lastTradeProfit < 0)
 {
-    if (MathAbs(cumulativeLoss) >= MaxCumulativeLoss)
-    {
-        Print("🛑 Max cumulative loss reached (", DoubleToString(cumulativeLoss, 2), 
-              "). Resetting lot size and loss.");
-        cumulativeLoss = 0.0;
-        lastUsedLotSize = LotSize;
-    }
-    else
-    {
-        lastUsedLotSize *= MartingaleFactor;
-        if (lastUsedLotSize > MaxLotSize)
-            lastUsedLotSize = MaxLotSize;
-        Print("🔁 Martingale Active. Cumulative Loss: ", DoubleToString(cumulativeLoss, 2),
-              " | Using Lot: ", DoubleToString(lastUsedLotSize, 2));
-    }
-}
+   if (MathAbs(lastTradeProfit) >= MaxLastTradeLoss)
+   {
+      Print("🛑 Max last trade loss reached (", DoubleToString(lastTradeProfit, 2), "). Resetting lot size.");
+      lastUsedLotSize = LotSize;
+   }
    else
    {
-      if (cumulativeLoss >= 0)
+      lastUsedLotSize *= MartingaleFactor;
+      if (lastUsedLotSize > MaxLotSize)
+         lastUsedLotSize = MaxLotSize;
+
+      Print("🔁 Martingale (Last Trade Loss) | Lot: ", DoubleToString(lastUsedLotSize, 2),
+            " | Last Profit: ", DoubleToString(lastTradeProfit, 2));
+   }
+}
+      else
       {
-         cumulativeLoss = 0.0;
          lastUsedLotSize = LotSize;
-         Print("✅ Recovered. Resetting Lot & Loss.");
+         if (TradingStrategy == "cumulative") cumulativeLoss = 0.0;
+         Print("✅ Resetting lot size after recovery.");
       }
    }
+   else
+   {
+      lastUsedLotSize = LotSize;
+      Print("📌 Martingale disabled. Using fixed lot: ", DoubleToString(LotSize, 2));
+   }
 
-   // ✅ Skip if correct trade is already open
+   // ✅ Check if correct order already exists
    bool hasCorrectOrder = false;
    for (int j = 0; j < OrdersTotal(); j++)
    {
@@ -170,7 +198,7 @@ if (EnableMartingale && cumulativeLoss < 0)
       }
    }
 
-   // ✅ Open new trade immediately if no correct order
+   // ✅ Open New Trade
    if (!hasCorrectOrder)
    {
       int ticket = -1;

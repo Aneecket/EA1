@@ -30,7 +30,9 @@ double lastTradeProfit = 0.0;
 
 bool waitAfterClose = false;
 datetime waitStartTime = 0;
-int pauseSeconds = 10;
+int pauseSeconds = 5;
+datetime lastBarTime = 0;
+
 
 int GenerateMagicNumber()
 {
@@ -48,6 +50,15 @@ void OnTick()
 {
    if (!IsTradeAllowed()) return;
    RefreshRates();
+
+
+// ✅ Candle Close Check
+datetime currentBarTime = Time[0];
+if (currentBarTime == lastBarTime)
+   return;  // Still same candle, do nothing
+
+lastBarTime = currentBarTime;  // Update only after candle closes
+
 
    // ⏳ Pause logic
    if (waitAfterClose)

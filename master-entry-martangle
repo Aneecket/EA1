@@ -1,0 +1,239 @@
+//+------------------------------------------------------------------+
+//|                          TrendFilterMartingaleEA.mq4             |
+//|     HA EA with Flexible Martingale Logic + Instant Re-entry     |
+//+------------------------------------------------------------------+
+#property strict
+string labelName = "ultradeforex_dlable20";
+
+extern double LotSize = 0.01;
+extern int    Slippage = 100;
+
+extern bool   EnableSLTP = false;        // ✅ Enable SL/TP
+extern double StopLossPips = 100.0;      // SL in pips
+extern double TakeProfitPips = 100.0;    // TP in pips
+
+
+extern bool   EnableMartingale = true;
+extern string TradingStrategy = "last_trade"; // "cumulative" or "last_trade"
+extern double MartingaleFactor = 2.0;
+extern double MaxLotSize = 10.0;
+extern double MaxCumulativeLoss = 100;
+extern double MaxLastTradeLoss = 100;
+
+
+int MagicNumber;
+
+string lastSignal = "";
+double lastUsedLotSize = 0.01;
+double cumulativeLoss = 0.0;
+double lastTradeProfit = 0.0;
+
+bool waitAfterClose = false;
+datetime waitStartTime = 0;
+int pauseSeconds = 10;
+
+int GenerateMagicNumber()
+{
+   return (int)TimeLocal();
+}
+
+int OnInit()
+{
+   MagicNumber = GenerateMagicNumber();
+   Print("🟢 EA Initialized | Symbol: ", Symbol(), " | TF: ", Period(), " | Magic: ", MagicNumber);
+   return(INIT_SUCCEEDED);
+}
+
+void OnTick()
+{
+   if (!IsTradeAllowed()) return;
+   RefreshRates();
+
+   // ⏳ Pause logic
+   if (waitAfterClose)
+   {
+      int elapsed = TimeCurrent() - waitStartTime;
+      if (elapsed < pauseSeconds)
+      {
+         Print("⏳ Waiting... ", pauseSeconds - elapsed, "s left");
+         return;
+      }
+      else
+      {
+         waitAfterClose = false;
+         Print("✅ Wait over. Resuming.");
+      }
+   }
+
+// ✅ Signal Calculation (Heiken Ashi + MA)
+string signal = "NO SIGNAL";
+
+if (ObjectFind(0, labelName) >= 0)
+{
+    string labelText = ObjectGetString(0, labelName, OBJPROP_TEXT);
+
+    if (labelText == "BUY")
+        signal = "BUY";
+    else if (labelText == "SELL")
+        signal = "SELL";
+}
+
+if (signal == "NO SIGNAL" || signal == lastSignal)
+    return;
+
+
+   // ✅ Close Opposite Order
+   for (int j = OrdersTotal() - 1; j >= 0; j--)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_SELL) ||
+                (signal == "SELL" && OrderType() == OP_BUY))
+            {
+               double closePrice = (OrderType() == OP_BUY ? Bid : Ask);
+               bool closed = OrderClose(OrderTicket(), OrderLots(), closePrice, Slippage, clrRed);
+
+               if (closed)
+               {
+                  Print("✅ Closed opposite order | Ticket: ", OrderTicket());
+
+                  if (OrderSelect(OrderTicket(), SELECT_BY_TICKET, MODE_HISTORY))
+                  {
+                     double profit = OrderProfit();
+                     lastTradeProfit = profit;
+
+                     if (TradingStrategy == "cumulative")
+                        cumulativeLoss += profit;
+
+                     if (profit < 0)
+                        Print("🔴 (Post-Close) Loss: ", DoubleToString(profit, 2),
+                              " | Cumulative: ", DoubleToString(cumulativeLoss, 2));
+                     else
+                        Print("🟢 (Post-Close) Profit: ", DoubleToString(profit, 2),
+                              " | Cumulative: ", DoubleToString(cumulativeLoss, 2));
+
+                     waitAfterClose = true;
+                     waitStartTime = TimeCurrent();
+                     return;  // Wait before opening new trade
+                  }
+               }
+               else
+               {
+                  Print("❌ Close failed | Error: ", GetLastError());
+               }
+            }
+         }
+      }
+   }
+
+   // ✅ Lot Size Decision Based on Strategy
+   if (EnableMartingale)
+   {
+      if (TradingStrategy == "cumulative" && cumulativeLoss < 0)
+      {
+         if (MathAbs(cumulativeLoss) >= MaxCumulativeLoss)
+         {
+            Print("🛑 Max cumulative loss reached. Resetting.");
+            cumulativeLoss = 0.0;
+            lastUsedLotSize = LotSize;
+         }
+         else
+         {
+            lastUsedLotSize *= MartingaleFactor;
+            if (lastUsedLotSize > MaxLotSize)
+               lastUsedLotSize = MaxLotSize;
+            Print("🔁 Martingale (Cumulative) | Lot: ", DoubleToString(lastUsedLotSize, 2),
+                  " | Cumulative Loss: ", DoubleToString(cumulativeLoss, 2));
+         }
+      }
+else if (TradingStrategy == "last_trade" && lastTradeProfit < 0)
+{
+   if (MathAbs(lastTradeProfit) >= MaxLastTradeLoss)
+   {
+      Print("🛑 Max last trade loss reached (", DoubleToString(lastTradeProfit, 2), "). Resetting lot size.");
+      lastUsedLotSize = LotSize;
+   }
+   else
+   {
+      lastUsedLotSize *= MartingaleFactor;
+      if (lastUsedLotSize > MaxLotSize)
+         lastUsedLotSize = MaxLotSize;
+
+      Print("🔁 Martingale (Last Trade Loss) | Lot: ", DoubleToString(lastUsedLotSize, 2),
+            " | Last Profit: ", DoubleToString(lastTradeProfit, 2));
+   }
+}
+      else
+      {
+         lastUsedLotSize = LotSize;
+         if (TradingStrategy == "cumulative") cumulativeLoss = 0.0;
+         Print("✅ Resetting lot size after recovery.");
+      }
+   }
+   else
+   {
+      lastUsedLotSize = LotSize;
+      Print("📌 Martingale disabled. Using fixed lot: ", DoubleToString(LotSize, 2));
+   }
+
+   // ✅ Check if correct order already exists
+   bool hasCorrectOrder = false;
+   for (int j = 0; j < OrdersTotal(); j++)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_BUY) ||
+                (signal == "SELL" && OrderType() == OP_SELL))
+            {
+               hasCorrectOrder = true;
+               break;
+            }
+         }
+      }
+   }
+
+   // ✅ Open New Trade
+
+if (!hasCorrectOrder)
+{
+   int ticket = -1;
+
+   double sl = 0;
+   double tp = 0;
+   double point = MarketInfo(Symbol(), MODE_POINT);
+   int digits = MarketInfo(Symbol(), MODE_DIGITS);
+
+   if (EnableSLTP)
+   {
+      double pip = (digits == 5 || digits == 3) ? 10 * point : point;
+      if (signal == "BUY")
+      {
+         sl = Ask - StopLossPips * pip;
+         tp = Ask + TakeProfitPips * pip;
+      }
+      else if (signal == "SELL")
+      {
+         sl = Bid + StopLossPips * pip;
+         tp = Bid - TakeProfitPips * pip;
+      }
+   }
+
+   if (signal == "BUY")
+      ticket = OrderSend(Symbol(), OP_BUY, lastUsedLotSize, Ask, Slippage, sl, tp, "HA BUY", MagicNumber, 0, clrBlue);
+   else if (signal == "SELL")
+      ticket = OrderSend(Symbol(), OP_SELL, lastUsedLotSize, Bid, Slippage, sl, tp, "HA SELL", MagicNumber, 0, clrRed);
+
+   if (ticket > 0)
+      Print("🚀 Opened ", signal, " | Ticket: ", ticket, " | Lot: ", DoubleToString(lastUsedLotSize, 2),
+            (EnableSLTP ? " | SL: " + DoubleToString(sl, digits) + " | TP: " + DoubleToString(tp, digits) : ""));
+   else
+      Print("❌ Failed to open ", signal, " | Error: ", GetLastError());
+}
+
+
+   lastSignal = signal;
+}

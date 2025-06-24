@@ -125,9 +125,9 @@ if (signal == "NO SIGNAL" || signal == lastSignal)
                         Print("🟢 (Post-Close) Profit: ", DoubleToString(profit, 2),
                               " | Cumulative: ", DoubleToString(cumulativeLoss, 2));
 
-                     waitAfterClose = true;
-                     waitStartTime = TimeCurrent();
-                     return;  // Wait before opening new trade
+             //        waitAfterClose = true;
+             //        waitStartTime = TimeCurrent();
+             //        return;  // Wait before opening new trade
                   }
                }
                else

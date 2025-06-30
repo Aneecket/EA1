@@ -1,0 +1,291 @@
+//+------------------------------------------------------------------+
+//| TrendFilterMartingaleEA.mq4                                     |
+//+------------------------------------------------------------------+
+#property strict
+
+extern double LotSize = 0.01;
+extern int    Slippage = 100;
+extern bool   EnableSLTP = false;
+extern double StopLossPips = 100.0;
+extern double TakeProfitPips = 100.0;
+
+extern bool   EnableMartingale = true;
+extern string TradingStrategy = "last_trade"; // "cumulative" or "last_trade"
+extern double MartingaleFactor = 2.0;
+extern double MaxLotSize = 10.0;
+extern double MaxCumulativeLoss = 1000.0;
+extern double MaxLastTradeLoss = 1000.0;
+
+extern int Stage1Count = 5;
+extern int Stage2Count = 5;
+extern int Stage3Count = 5;
+
+extern double Stage1Multiplier = 1.5;
+extern double Stage2Multiplier = 2.0;
+extern double Stage3Multiplier = 2.5;
+
+int martingaleLossCount = 0;
+
+
+string lastCandleSignal = "";
+string lastSignal = "";
+double lastUsedLotSize = 0.01;
+double cumulativeLoss = 0.0;
+double lastTradeProfit = 0.0;
+datetime lastBarTime = 0;
+int MagicNumber;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   MagicNumber = (int)TimeLocal();
+   Print("🟢 EA Initialized | Symbol: ", Symbol(), " | TF: ", Period());
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if (!IsTradeAllowed()) return;
+   RefreshRates();
+
+   datetime currentBarTime = Time[0];
+   if (currentBarTime != lastBarTime)
+   {
+      // ✅ New Candle Started
+      string ichimokuSignal = GetIchimokuCloudSignal();       // Signal 1
+      string labelSignal    = GetChartLabelSignal();          // Signal 2
+
+      Print("📈 Ichimoku Signal: ", ichimokuSignal, " | 🏷️ Label Signal: ", labelSignal);
+
+      // ✅ Proceed only if both signals agree
+      if ((ichimokuSignal == "BUY" && labelSignal == "BUY") ||
+          (ichimokuSignal == "SELL" && labelSignal == "SELL"))
+          
+         
+
+
+
+      {
+          DrawSignalArrow(ichimokuSignal, 1); // Draw arrow on last closed candle
+         string signal = ichimokuSignal;
+
+         if (signal != lastSignal)
+         {
+            HandleCloseOpposite(signal);
+            HandleMartingaleLogic();
+            HandleOpenNewTrade(signal);
+            lastSignal = signal;
+         }
+
+         Print("🟢 Confirmed Signal: ", signal);
+      }
+      else
+      {
+         Print("⚠️ Signal mismatch or no signal. No action taken.");
+      }
+
+      lastBarTime = currentBarTime;
+   }
+}
+
+string GetChartLabelSignal()
+{
+   string labelName = "ultradeforex_dlable20"; // ← your actual label name
+
+   if (ObjectFind(0, labelName) >= 0)
+   {
+      string labelText = ObjectGetString(0, labelName, OBJPROP_TEXT);
+      if (labelText == "BUY" || labelText == "SELL")
+         return labelText;
+   }
+   return "NO SIGNAL";
+}
+
+
+
+//+------------------------------------------------------------------+
+//| Calculate Heiken Ashi Signal for Previous Closed Candle          |
+//+------------------------------------------------------------------+
+string GetIchimokuCloudSignal()
+{
+   int Tenkan = 9;
+   int Kijun = 26;
+   int Senkou = 52;
+
+   int shift_offset = Kijun; // Cloud is plotted Kijun bars ahead (usually 26)
+   int i = 1;                // Use last closed candle
+
+   int cloud_shifted_i = i + shift_offset;
+
+   double spanA = iIchimoku(NULL, 0, Tenkan, Kijun, Senkou, MODE_SENKOUSPANA, cloud_shifted_i);
+   double spanB = iIchimoku(NULL, 0, Tenkan, Kijun, Senkou, MODE_SENKOUSPANB, cloud_shifted_i);
+   double price = Close[i];
+
+   double cloudTop = MathMax(spanA, spanB);
+   double cloudBottom = MathMin(spanA, spanB);
+
+   if (price > cloudTop)
+      return "BUY";
+   else if (price < cloudBottom)
+      return "SELL";
+   else
+      return "NO SIGNAL";
+}
+
+
+
+//+------------------------------------------------------------------+
+void HandleCloseOpposite(string signal)
+{
+   for (int j = OrdersTotal() - 1; j >= 0; j--)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_SELL) ||
+                (signal == "SELL" && OrderType() == OP_BUY))
+            {
+               double closePrice = (OrderType() == OP_BUY ? Bid : Ask);
+               if (OrderClose(OrderTicket(), OrderLots(), closePrice, Slippage, clrRed))
+               {
+                  if (OrderSelect(OrderTicket(), SELECT_BY_TICKET, MODE_HISTORY))
+                  {
+                     lastTradeProfit = OrderProfit();
+                     if (TradingStrategy == "cumulative")
+                        cumulativeLoss += lastTradeProfit;
+
+                     if (lastTradeProfit < 0)
+                        Print("🔴 Loss: ", lastTradeProfit, " | Cumulative: ", cumulativeLoss);
+                     else
+                        Print("🟢 Profit: ", lastTradeProfit, " | Cumulative: ", cumulativeLoss);
+                  }
+               }
+               else
+               {
+                  Print("❌ Failed to close | Error: ", GetLastError());
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+void HandleMartingaleLogic()
+{
+   if (!EnableMartingale)
+   {
+      lastUsedLotSize = LotSize;
+      martingaleLossCount = 0;
+      return;
+   }
+
+   if (lastTradeProfit < 0)
+   {
+      martingaleLossCount++;
+
+      double multiplier = 1.0;
+
+      if (martingaleLossCount <= Stage1Count)
+         multiplier = Stage1Multiplier;
+      else if (martingaleLossCount <= (Stage1Count + Stage2Count))
+         multiplier = Stage2Multiplier;
+      else
+         multiplier = Stage3Multiplier;
+
+      // Multiply last used lot size by appropriate multiplier
+      if (lastUsedLotSize <= 0)
+         lastUsedLotSize = LotSize;
+
+      lastUsedLotSize *= multiplier;
+   }
+   else
+   {
+      // Reset everything on profit
+      martingaleLossCount = 0;
+      lastUsedLotSize = LotSize;
+      cumulativeLoss = 0.0;
+   }
+
+   // Clamp to MaxLotSize
+   if (lastUsedLotSize > MaxLotSize)
+      lastUsedLotSize = MaxLotSize;
+
+   Print("📊 Martingale Loss Count: ", martingaleLossCount, 
+         " | Multiplier Applied: ", 
+         (martingaleLossCount <= Stage1Count) ? Stage1Multiplier :
+         (martingaleLossCount <= (Stage1Count + Stage2Count)) ? Stage2Multiplier : Stage3Multiplier,
+         " | New Lot Size: ", lastUsedLotSize);
+}
+
+//+------------------------------------------------------------------+
+void HandleOpenNewTrade(string signal)
+{
+   bool hasCorrectOrder = false;
+
+   for (int j = 0; j < OrdersTotal(); j++)
+   {
+      if (OrderSelect(j, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber)
+         {
+            if ((signal == "BUY" && OrderType() == OP_BUY) ||
+                (signal == "SELL" && OrderType() == OP_SELL))
+            {
+               hasCorrectOrder = true;
+               break;
+            }
+         }
+      }
+   }
+
+   if (hasCorrectOrder) return;
+
+   double sl = 0, tp = 0;
+   double point = MarketInfo(Symbol(), MODE_POINT);
+   int digits = MarketInfo(Symbol(), MODE_DIGITS);
+   double pip = (digits == 3 || digits == 5) ? 10 * point : point;
+
+   if (EnableSLTP)
+   {
+      if (signal == "BUY")
+      {
+         sl = Ask - StopLossPips * pip;
+         tp = Ask + TakeProfitPips * pip;
+      }
+      else
+      {
+         sl = Bid + StopLossPips * pip;
+         tp = Bid - TakeProfitPips * pip;
+      }
+   }
+
+   int ticket = -1;
+   if (signal == "BUY")
+      ticket = OrderSend(Symbol(), OP_BUY, lastUsedLotSize, Ask, Slippage, sl, tp, "HA BUY", MagicNumber, 0, clrBlue);
+   else if (signal == "SELL")
+      ticket = OrderSend(Symbol(), OP_SELL, lastUsedLotSize, Bid, Slippage, sl, tp, "HA SELL", MagicNumber, 0, clrRed);
+
+   if (ticket > 0)
+      Print("🚀 Opened ", signal, " | Ticket: ", ticket);
+   else
+      Print("❌ Failed to open ", signal, " | Error: ", GetLastError());
+}
+
+void DrawSignalArrow(string signal, int barShift)
+{
+   string arrowName = "IchimokuArrow_" + TimeToString(Time[barShift], TIME_MINUTES);
+
+   if (ObjectFind(0, arrowName) >= 0)
+      ObjectDelete(arrowName);
+
+   double priceLevel = (signal == "BUY") ? Low[barShift] - 10 * Point : High[barShift] + 10 * Point;
+   int arrowCode = (signal == "BUY") ? 233 : 234; // 233 = up, 234 = down
+
+   ObjectCreate(0, arrowName, OBJ_ARROW, 0, Time[barShift], priceLevel);
+   ObjectSetInteger(0, arrowName, OBJPROP_ARROWCODE, arrowCode);
+   ObjectSetInteger(0, arrowName, OBJPROP_COLOR, (signal == "BUY") ? clrBlue : clrRed);
+   ObjectSetInteger(0, arrowName, OBJPROP_WIDTH, 2);
+}

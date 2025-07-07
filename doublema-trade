@@ -1,0 +1,318 @@
+//+------------------------------------------------------------------+
+//| TrendFilterMartingaleEA.mq4                                     |
+//+------------------------------------------------------------------+
+#property strict
+#define TREND_UP   0
+#define TREND_DOWN 1
+extern string Supertrend_Indicator_Name = "supertrend";
+
+extern double LotSize = 0.01;
+extern int    Slippage = 100;
+extern bool   EnableSLTP = false;
+extern double StopLossPips = 100.0;
+extern double TakeProfitPips = 100.0;
+
+extern bool   EnableMartingale = false;
+extern string TradingStrategy = "last_trade"; // "cumulative" or "last_trade"
+extern double MartingaleFactor = 2.0;
+extern double MaxLotSize = 10.0;
+extern double MaxCumulativeLoss = 100.0;
+extern double MaxLastTradeLoss = 100.0;
+
+extern int Stage1Count = 5;
+extern int Stage2Count = 5;
+extern int Stage3Count = 5;
+
+extern double Stage1Multiplier = 1.5;
+extern double Stage2Multiplier = 2.0;
+extern double Stage3Multiplier = 2.5;
+
+extern bool AllowFridayTrading = true;
+extern bool AllowSaturdayTrading = true;
+extern bool AllowSundayTrading = true;
+
+extern int CooldownMinutes = 3;
+
+extern bool EnableMorningSession = true;
+extern int MorningStartHour = 0;
+extern int MorningStartMinute = 0;
+extern int MorningEndHour = 11;
+extern int MorningEndMinute = 59;
+
+extern bool EnableAfternoonSession = true;
+extern int AfternoonStartHour = 12;
+extern int AfternoonStartMinute = 0;
+extern int AfternoonEndHour = 17;
+extern int AfternoonEndMinute = 59;
+
+extern bool EnableEveningSession = true;
+extern int EveningStartHour = 18;
+extern int EveningStartMinute = 0;
+extern int EveningEndHour = 23;
+extern int EveningEndMinute = 59;
+
+extern bool EnableMultipleTrades = false;
+
+extern int    inp_zone_period           = 10;
+extern int    inp_amplitude_period      = 25;
+extern double inp_amplitude_coefficient = 3.0;
+
+input int signalShift = 1; // Last closed candle
+
+datetime lastBarTime = 0;
+datetime lastTradeTime = D'1970.01.01 00:00';
+
+int martingaleLossCount = 0;
+string lastSignal = "";
+double lastUsedLotSize = 0.01;
+double cumulativeLoss = 0.0;
+double lastTradeProfit = 0.0;
+int MagicNumber;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   MagicNumber = (int)TimeLocal();
+   Print("🟢 EA Initialized | Symbol: ", Symbol(), " | TF: ", Period());
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if (!IsTradeAllowed()) return;
+   RefreshRates();
+
+   datetime currentBarTime = Time[0];
+   if (currentBarTime == lastBarTime) return;
+   lastBarTime = currentBarTime;
+
+   if (!IsTradingSessionAllowed(TimeCurrent()))
+   {
+      Print("Outside allowed session. Skipping.");
+      return;
+   }
+
+   int day = TimeDayOfWeek(TimeCurrent());
+   if ((day == 5 && !AllowFridayTrading) ||
+       (day == 6 && !AllowSaturdayTrading) ||
+       (day == 0 && !AllowSundayTrading))
+   {
+      Print("Trading not allowed today.");
+      return;
+   }
+
+   string direction = GetSignalFromSupertrend();
+
+   if (direction == "NONE") return;
+
+   // Close opposite trades
+   if (direction == "BUY") CloseAllTrades(OP_SELL);
+   else if (direction == "SELL") CloseAllTrades(OP_BUY);
+
+   // Check multiple trade rule
+   int opentype = (direction == "BUY") ? OP_BUY : OP_SELL;
+   if (!EnableMultipleTrades && IsTradeOpen(opentype))
+   {
+      Print(direction, " already open. Skipping...");
+      return;
+   }
+
+   // Cooldown check
+   if (TimeCurrent() - lastTradeTime < CooldownMinutes * 60)
+   {
+      Print("Cooldown active. Skipping ", direction);
+      return;
+   }
+
+   // Martingale logic
+   HandleMartingaleLogic();
+
+   // Open new trade
+   HandleOpenNewTrade(direction);
+
+   lastSignal = direction;
+   lastTradeTime = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+string GetSignalFromSupertrend()
+{
+
+
+   double arrowUp = iCustom(Symbol(), Period(), "doublema", 
+                            inp_zone_period, 
+                            inp_amplitude_period, 
+                            inp_amplitude_coefficient,
+                            0, signalShift);
+
+   double arrowDn = iCustom(Symbol(), Period(), "doublema", 
+                            inp_zone_period, 
+                            inp_amplitude_period, 
+                            inp_amplitude_coefficient,
+                            1, signalShift);
+
+
+   if (arrowUp != EMPTY_VALUE)
+   {
+      Print("BUY SIGNAL at ", TimeToString(Time[signalShift]), 
+            " | Price: ", DoubleToString(Close[signalShift], Digits));
+            
+      return "BUY";
+   }
+   else if (arrowDn != EMPTY_VALUE)
+   {
+      Print("SELL SIGNAL at ", TimeToString(Time[signalShift]), 
+            " | Price: ", DoubleToString(Close[signalShift], Digits));
+     return "SELL";
+   }
+   else
+   {
+      Print("NO SIGNAL at ", TimeToString(Time[signalShift]));
+        return "NONE";
+   }
+  
+
+
+}
+
+
+//+------------------------------------------------------------------+
+bool IsTradingSessionAllowed(datetime t)
+{
+   int h = TimeHour(t);
+   int m = TimeMinute(t);
+   int now = h * 60 + m;
+
+   if (EnableMorningSession &&
+       now >= MorningStartHour * 60 + MorningStartMinute &&
+       now <= MorningEndHour * 60 + MorningEndMinute)
+      return true;
+
+   if (EnableAfternoonSession &&
+       now >= AfternoonStartHour * 60 + AfternoonStartMinute &&
+       now <= AfternoonEndHour * 60 + AfternoonEndMinute)
+      return true;
+
+   if (EnableEveningSession &&
+       now >= EveningStartHour * 60 + EveningStartMinute &&
+       now <= EveningEndHour * 60 + EveningEndMinute)
+      return true;
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
+void HandleMartingaleLogic()
+{
+   if (!EnableMartingale)
+   {
+      lastUsedLotSize = LotSize;
+      martingaleLossCount = 0;
+      return;
+   }
+
+   if (lastTradeProfit < 0)
+   {
+      martingaleLossCount++;
+      double multiplier = Stage1Multiplier;
+      if (martingaleLossCount > Stage1Count + Stage2Count)
+         multiplier = Stage3Multiplier;
+      else if (martingaleLossCount > Stage1Count)
+         multiplier = Stage2Multiplier;
+
+      if (lastUsedLotSize <= 0) lastUsedLotSize = LotSize;
+
+      lastUsedLotSize *= multiplier;
+   }
+   else
+   {
+      martingaleLossCount = 0;
+      lastUsedLotSize = LotSize;
+      cumulativeLoss = 0.0;
+   }
+
+   if (lastUsedLotSize > MaxLotSize)
+      lastUsedLotSize = MaxLotSize;
+
+   Print("📊 Martingale Count: ", martingaleLossCount,
+         " | Lot Size: ", lastUsedLotSize);
+}
+
+//+------------------------------------------------------------------+
+void HandleOpenNewTrade(string signal)
+{
+   double price = (signal == "BUY") ? Ask : Bid;
+   double sl = 0, tp = 0;
+   double point = MarketInfo(Symbol(), MODE_POINT);
+   int digits = MarketInfo(Symbol(), MODE_DIGITS);
+   double pip = (digits == 3 || digits == 5) ? 10 * point : point;
+
+   if (EnableSLTP)
+   {
+      if (signal == "BUY")
+      {
+         sl = price - StopLossPips * pip;
+         tp = price + TakeProfitPips * pip;
+      }
+      else
+      {
+         sl = price + StopLossPips * pip;
+         tp = price - TakeProfitPips * pip;
+      }
+   }
+
+   int ticket = -1;
+   int type = (signal == "BUY") ? OP_BUY : OP_SELL;
+
+   ticket = OrderSend(Symbol(), type, lastUsedLotSize, price, Slippage, sl, tp,
+                      "TF " + signal, MagicNumber, 0,
+                      signal == "BUY" ? clrBlue : clrRed);
+
+   if (ticket > 0)
+      Print("🚀 Opened ", signal, " | Ticket: ", ticket);
+   else
+      Print("❌ Failed to open ", signal, " | Error: ", GetLastError());
+}
+
+//+------------------------------------------------------------------+
+void CloseAllTrades(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber &&
+             OrderType() == type)
+         {
+            double price = (type == OP_BUY) ? Bid : Ask;
+            if (OrderClose(OrderTicket(), OrderLots(), price, Slippage, clrRed))
+            {
+               if (OrderSelect(OrderTicket(), SELECT_BY_TICKET, MODE_HISTORY))
+               {
+                  lastTradeProfit = OrderProfit();
+                  if (TradingStrategy == "cumulative")
+                     cumulativeLoss += lastTradeProfit;
+               }
+               Print("✅ Closed ", type == OP_BUY ? "BUY" : "SELL", " | Ticket: ", OrderTicket());
+            }
+            else
+               Print("❌ Close failed | Error: ", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+bool IsTradeOpen(int type)
+{
+   for (int i = 0; i < OrdersTotal(); i++)
+   {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if (OrderSymbol() == Symbol() && OrderType() == type && OrderMagicNumber() == MagicNumber)
+            return true;
+      }
+   }
+   return false;
+}

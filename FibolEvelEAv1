@@ -1,0 +1,105 @@
+//+------------------------------------------------------------------+
+//|                                  FiboAutoTraderEA_v2.mq4        |
+//|       Entry: Open inside 38.2–61.8, Close outside range         |
+//+------------------------------------------------------------------+
+#property strict
+
+extern int LookbackBars = 200;
+extern double LotSize = 0.01;
+extern int Slippage = 3;
+extern double BUY_Target_Percent = 90.0;
+extern double BUY_Stop_Percent = 38.2;
+extern double SELL_Target_Percent = 10.0;
+extern double SELL_Stop_Percent = 61.8;
+
+datetime lastCandleTime = 0;
+int ticket = -1;
+
+//+------------------------------------------------------------------+
+int OnInit() {
+   Print("FiboAutoTraderEA_v2 initialized.");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+void OnTick() {
+   if (Time[0] == lastCandleTime) return;
+   lastCandleTime = Time[0];
+
+   double swingHigh = -1;
+   double swingLow = 999999;
+   for (int i = 1; i <= LookbackBars; i++) {
+      if (High[i] > swingHigh) swingHigh = High[i];
+      if (Low[i] < swingLow) swingLow = Low[i];
+   }
+
+   double candleOpen = Open[1];
+   double candleClose = Close[1];
+
+   double fibOpen = (candleOpen - swingLow) / (swingHigh - swingLow) * 100.0;
+   double fibClose = (candleClose - swingLow) / (swingHigh - swingLow) * 100.0;
+
+   fibOpen = NormalizeDouble(fibOpen, 1);
+   fibClose = NormalizeDouble(fibClose, 1);
+   double price = NormalizeDouble(candleClose, Digits);
+      // ✅ New print statement added
+   Print("Fibo % Close: ", fibClose, "% at price ", price);
+
+   bool buyOpen = IsTradeOpen(OP_BUY);
+   bool sellOpen = IsTradeOpen(OP_SELL);
+
+   // Entry Conditions
+   if (!buyOpen && !sellOpen) {
+      if (fibOpen >= 38.2 && fibOpen <= 61.8 && fibClose > 61.8) {
+         ticket = OrderSend(Symbol(), OP_BUY, LotSize, Ask, Slippage, 0, 0, "BUY on fib breakout", 0, 0, clrBlue);
+         if (ticket > 0) Print("BUY Signal: Open=", fibOpen, "%, Close=", fibClose, "% at ", price);
+      }
+      if (fibOpen >= 38.2 && fibOpen <= 61.8 && fibClose < 38.2) {
+         ticket = OrderSend(Symbol(), OP_SELL, LotSize, Bid, Slippage, 0, 0, "SELL on fib breakout", 0, 0, clrRed);
+         if (ticket > 0) Print("SELL Signal: Open=", fibOpen, "%, Close=", fibClose, "% at ", price);
+      }
+   }
+// Exit Conditions
+if (buyOpen) {
+   if (fibClose > BUY_Target_Percent) {
+      CloseTrade(OP_BUY);
+      Print("✅ BUY Target Hit at ", price, " (", fibClose, "%)");
+   } else if (fibClose < BUY_Stop_Percent) {
+      CloseTrade(OP_BUY);
+      Print("❌ BUY SL Hit at ", price, " (", fibClose, "%)");
+   }
+}
+
+if (sellOpen) {
+   if (fibClose < SELL_Target_Percent) {
+      CloseTrade(OP_SELL);
+      Print("✅ SELL Target Hit at ", price, " (", fibClose, "%)");
+   } else if (fibClose > SELL_Stop_Percent) {
+      CloseTrade(OP_SELL);
+      Print("❌ SELL SL Hit at ", price, " (", fibClose, "%)");
+   }
+}
+
+}
+
+//+------------------------------------------------------------------+
+bool IsTradeOpen(int type) {
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+         if (OrderSymbol() == Symbol() && OrderType() == type) return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+void CloseTrade(int type) {
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+         if (OrderSymbol() == Symbol() && OrderType() == type) {
+            double price = (type == OP_BUY) ? Bid : Ask;
+            OrderClose(OrderTicket(), OrderLots(), price, Slippage, clrYellow);
+         }
+      }
+   }
+}
